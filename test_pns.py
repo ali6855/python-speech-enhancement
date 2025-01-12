@@ -2,9 +2,8 @@ import os
 import numpy as np
 import soundfile as sf
 from pesq import pesq
-from ipywidgets import interact, widgets
-from google.colab import files
-from pns.noise_suppressor import NoiseSuppressor  # فرض بر این است که این ماژول موجود است.
+
+from pns.noise_suppressor import NoiseSuppressor  # فرض بر این است که این ماژول در دسترس است.
 
 # Ensure export directory exists
 EXPORT_DIR = "export"
@@ -20,54 +19,60 @@ def apply_window(frame, window_type="hamming"):
         window = np.ones(len(frame))  # No window
     return frame * window
 
-def process_audio(input_file, output_file, frame_size, window_type="hamming", normalize=True):
-    """Process audio with selected parameters."""
+def denoise_and_enhance(input_file, output_file, window_type="hamming", normalize=True):
+    """Denoise and enhance audio for better clarity."""
+    # Ensure export directory exists
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    output_file = os.path.join(EXPORT_DIR, os.path.basename(output_file))
+
+    # Check if input file exists
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Input file {input_file} does not exist.")
 
     noisy_wav, fs = sf.read(input_file)
-    noise_suppressor = NoiseSuppressor(fs)
-    x = noisy_wav
-    xfinal = np.zeros(len(x))
-    k = 0
-    while k + frame_size < len(x):
-        frame = x[k: k + frame_size]
-        frame = apply_window(frame, window_type)  # Apply window
-        xfinal[k: k + frame_size] = noise_suppressor.process_frame(frame)
-        k += frame_size
-    max_val = max(np.abs(xfinal))
-    if normalize and max_val > 0:
-        xfinal /= max_val
+    channels = noisy_wav.shape[1] if noisy_wav.ndim > 1 else 1
+    print(f"Input file: {input_file}")
+    print(f"Sample rate: {fs} Hz")
+    print(f"Number of channels: {channels}")
+    print(f"Output file: {output_file}")
+
+    if channels > 1:
+        xfinal = np.zeros(noisy_wav.shape)
+        for ch in range(channels):
+            noise_suppressor = NoiseSuppressor(fs)
+            x = noisy_wav[:, ch]
+            frame_size = noise_suppressor.get_frame_size()
+            k = 0
+            while k + frame_size < len(x):
+                frame = x[k: k + frame_size]
+                frame = apply_window(frame, window_type)  # Apply window
+                xfinal[k: k + frame_size, ch] = noise_suppressor.process_frame(frame)
+                k += frame_size
+            max_val = max(np.abs(xfinal[:, ch]))
+            if normalize and max_val > 0:
+                xfinal[:, ch] /= max_val
+    else:
+        noise_suppressor = NoiseSuppressor(fs)
+        x = noisy_wav
+        frame_size = noise_suppressor.get_frame_size()
+        xfinal = np.zeros(len(x))
+        k = 0
+        while k + frame_size < len(x):
+            frame = x[k: k + frame_size]
+            frame = apply_window(frame, window_type)  # Apply window
+            xfinal[k: k + frame_size] = noise_suppressor.process_frame(frame)
+            k += frame_size
+        max_val = max(np.abs(xfinal))
+        if normalize and max_val > 0:
+            xfinal /= max_val
+
+    # Save the processed file
     sf.write(output_file, xfinal, fs)
-    return output_file
+    print("Denoising and enhancement complete.")
 
-def upload_file_and_process():
-    """Upload file, process it, and download the result."""
-    uploaded = files.upload()
-    for filename in uploaded.keys():
-        input_file = filename
-        output_file = os.path.join(EXPORT_DIR, os.path.basename(input_file).replace(".wav", "_processed.wav"))
-
-        # Process audio
-        processed_file = process_audio(
-            input_file=input_file,
-            output_file=output_file,
-            frame_size=frame_size_slider.value,
-            window_type=window_type_dropdown.value
-        )
-
-        print(f"Processing complete. File saved at: {processed_file}")
-        files.download(processed_file)
-
-# Interactive widgets
-frame_size_slider = widgets.IntSlider(value=512, min=128, max=4096, step=128, description="Frame Size:")
-window_type_dropdown = widgets.Dropdown(options=["hamming", "hann", "none"], value="hamming", description="Window Type:")
-
-# Display widgets and button
-print("1. آپلود فایل صوتی:")
-print("2. تنظیم پارامترها:")
-display(frame_size_slider, window_type_dropdown)
-
-process_button = widgets.Button(description="Process and Download")
-process_button.on_click(lambda x: upload_file_and_process())
-display(process_button)
+if __name__ == "__main__":
+    # Example usage
+    try:
+        denoise_and_enhance("data/sp02_train_sn5.wav", "sp02_train_sn5_enhanced.wav", window_type="hamming", normalize=True)
+    except Exception as e:
+        print(f"An error occurred: {e}")
