@@ -1,16 +1,23 @@
+import os
 import numpy as np
 import soundfile as sf
 from pesq import pesq
-import os
 
 from pns.noise_suppressor import NoiseSuppressor  # فرض بر این است که این ماژول در دسترس است.
+
+# Ensure export directory exists
+EXPORT_DIR = "export"
+os.makedirs(EXPORT_DIR, exist_ok=True)
 
 def test():
     # Prepare Data 
     clean_files = ["data/sp02.wav", "data/sp04.wav", "data/sp06.wav", "data/sp09.wav"]
     input_files = ["data/sp02_train_sn5.wav", "data/sp04_babble_sn10.wav", "data/sp06_babble_sn5.wav", "data/sp09_babble_sn10.wav"]
-    output_files = ["data/sp02_train_sn5_processed.wav", "data/sp04_babble_sn10_processed.wav", "data/sp06_babble_sn5_processed.wav", "data/sp09_babble_sn10_processed.wav"]
-    
+    output_files = [os.path.join(EXPORT_DIR, f"sp02_train_sn5_processed.wav"),
+                    os.path.join(EXPORT_DIR, f"sp04_babble_sn10_processed.wav"),
+                    os.path.join(EXPORT_DIR, f"sp06_babble_sn5_processed.wav"),
+                    os.path.join(EXPORT_DIR, f"sp09_babble_sn10_processed.wav")]
+
     # Ensure file lists have the same length
     assert len(clean_files) == len(input_files) == len(output_files), "File lists must have the same length."
 
@@ -69,6 +76,10 @@ def test():
             print(f"Error calculating PESQ: {e}")
 
 def denoise_file(input_file, output_file):
+    # Ensure export directory exists
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    output_file = os.path.join(EXPORT_DIR, os.path.basename(output_file))
+
     # Check if input file exists
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Input file {input_file} does not exist.")
@@ -114,7 +125,7 @@ def denoise_file(input_file, output_file):
 if __name__ == "__main__":
     # Example usage
     try:
-        denoise_file("data/sp02_train_sn5.wav", "data/sp02_train_sn5_processed.wav")
+        denoise_file("data/sp02_train_sn5.wav", "sp02_train_sn5_processed.wav")
         test()
     except Exception as e:
         print(f"An error occurred: {e}")
