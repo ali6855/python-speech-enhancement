@@ -2,77 +2,131 @@ import os
 import numpy as np
 import soundfile as sf
 from pesq import pesq
+from pns.noise_suppressor import NoiseSuppressor
+import logging
 
-from pns.noise_suppressor import NoiseSuppressor  # فرض بر این است که این ماژول در دسترس است.
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Ensure export directory exists
 EXPORT_DIR = "export"
 os.makedirs(EXPORT_DIR, exist_ok=True)
 
-def apply_window(frame, window_type="hamming"):
-    """Apply a windowing function to the frame."""
-    if window_type == "hamming":
-        window = np.hamming(len(frame))
-    elif window_type == "hann":
-        window = np.hanning(len(frame))
-    else:
-        window = np.ones(len(frame))  # No window
-    return frame * window
+def test():
+    # Prepare Data 
+    clean_files = ["data/sp02.wav", "data/sp04.wav", "data/sp06.wav", "data/sp09.wav"]
+    input_files = ["data/sp02_train_sn5.wav", 
+                   "data/sp04_babble_sn10.wav", 
+                   "data/sp06_babble_sn5.wav", 
+                   "data/sp09_babble_sn10.wav"]
+    output_files = [os.path.join(EXPORT_DIR, "sp02_train_sn5_processed.wav"), 
+                    os.path.join(EXPORT_DIR, "sp04_babble_sn10_processed.wav"),
+                    os.path.join(EXPORT_DIR, "sp06_babble_sn5_processed.wav"), 
+                    os.path.join(EXPORT_DIR, "sp09_babble_sn10_processed.wav")]
 
-def denoise_and_enhance(input_file, output_file, window_type="hamming", normalize=True):
-    """Denoise and enhance audio for better clarity."""
-    # Ensure export directory exists
-    os.makedirs(EXPORT_DIR, exist_ok=True)
-    output_file = os.path.join(EXPORT_DIR, os.path.basename(output_file))
+    for i in range(len(input_files)):
+        clean_file = clean_files[i]
+        input_file = input_files[i]
+        output_file = output_files[i]
 
-    # Check if input file exists
-    if not os.path.exists(input_file):
-        raise FileNotFoundError(f"Input file {input_file} does not exist.")
+        try:
+            clean_wav, _  = sf.read(clean_file)
+            noisy_wav, fs = sf.read(input_file)
+        except FileNotFoundError as e:
+            logging.error(f"File not found: {e}")
+            continue
+        except Exception as e:
+            logging.error(f"Error reading files: {e}")
+            continue
 
-    noisy_wav, fs = sf.read(input_file)
-    channels = noisy_wav.shape[1] if noisy_wav.ndim > 1 else 1
-    print(f"Input file: {input_file}")
-    print(f"Sample rate: {fs} Hz")
-    print(f"Number of channels: {channels}")
-    print(f"Output file: {output_file}")
-
-    if channels > 1:
-        xfinal = np.zeros(noisy_wav.shape)
-        for ch in range(channels):
-            noise_suppressor = NoiseSuppressor(fs)
-            x = noisy_wav[:, ch]
-            frame_size = noise_suppressor.get_frame_size()
-            k = 0
-            while k + frame_size < len(x):
-                frame = x[k: k + frame_size]
-                frame = apply_window(frame, window_type)  # Apply window
-                xfinal[k: k + frame_size, ch] = noise_suppressor.process_frame(frame)
-                k += frame_size
-            max_val = max(np.abs(xfinal[:, ch]))
-            if normalize and max_val > 0:
-                xfinal[:, ch] /= max_val
-    else:
+        # Initialize
         noise_suppressor = NoiseSuppressor(fs)
-        x = noisy_wav
         frame_size = noise_suppressor.get_frame_size()
-        xfinal = np.zeros(len(x))
-        k = 0
-        while k + frame_size < len(x):
-            frame = x[k: k + frame_size]
-            frame = apply_window(frame, window_type)  # Apply window
-            xfinal[k: k + frame_size] = noise_suppressor.process_frame(frame)
-            k += frame_size
-        max_val = max(np.abs(xfinal))
-        if normalize and max_val > 0:
-            xfinal /= max_val
+        xfinal = np.zeros(len(noisy_wav))
 
-    # Save the processed file
-    sf.write(output_file, xfinal, fs)
-    print("Denoising and enhancement complete.")
+        # Start Processing
+        k = 0
+        while k + frame_size < len(noisy_wav):
+            frame = noisy_wav[k : k + frame_size]
+            xfinal[k : k + frame_size] = noise_suppressor.process_frame(frame)
+            k += frame_size
+
+        # Save Results
+        xfinal = xfinal / (np.max(np.abs(xfinal)) + 1e-10)
+        sf.write(output_file, xfinal, fs)
+
+        # Performance Metrics
+        logging.info(f"Processing completed for {input_file}")
+        try:
+            pesq_nb = pesq(ref=clean_wav, deg=noisy_wav, fs=fs, mode='nb')
+            logging.info(f"Input PESQ (NB): {pesq_nb:.4f}")
+            pesq_nb = pesq(ref=clean_wav, deg=xfinal, fs=fs, mode='nb')
+            logging.info(f"Output PESQ (NB): {pesq_nb:.4f}")
+
+            if fs > 8000:
+                pesq_wb = pesq(ref=clean_wav, deg=noisy_wav, fs=fs, mode='wb')
+                logging.info(f"Input PESQ (WB): {pesq_wb:.4f}")
+                pesq_wb = pesq(ref=clean_wav, deg=xfinal, fs=fs, mode='wb')
+                logging.info(f"Output PESQ (WB): {pesq_wb:.4f}")
+        except Exception as e:
+            logging.error(f"Error calculating PESQ: {e}")
+
+def denoise_all_files(input_files, output_files):
+    for input_file, output_file in zip(input_files, output_files):
+        try:
+            noisy_wav, fs = sf.read(input_file)
+        except FileNotFoundError:
+            logging.error(f"File not found: {input_file}")
+            continue
+        except Exception as e:
+            logging.error(f"Error reading file {input_file}: {e}")
+            continue
+
+        channels = noisy_wav.shape[1] if noisy_wav.ndim > 1 else 1
+        logging.info(f"Input file: {input_file}")
+        logging.info(f"Sample rate: {fs} Hz")
+        logging.info(f"Number of channels: {channels}")
+
+        if channels > 1:
+            xfinal = np.zeros_like(noisy_wav)
+
+            for ch in range(channels):
+                noise_suppressor = NoiseSuppressor(fs)
+                frame_size = noise_suppressor.get_frame_size()
+
+                k = 0
+                while k + frame_size < len(noisy_wav):
+                    frame = noisy_wav[k : k + frame_size, ch]
+                    xfinal[k : k + frame_size, ch] = noise_suppressor.process_frame(frame)
+                    k += frame_size
+
+                xfinal[:, ch] = xfinal[:, ch] / (np.max(np.abs(xfinal[:, ch])) + 1e-10)
+        else:
+            noise_suppressor = NoiseSuppressor(fs)
+            frame_size = noise_suppressor.get_frame_size()
+            xfinal = np.zeros(len(noisy_wav))
+
+            k = 0
+            while k + frame_size < len(noisy_wav):
+                frame = noisy_wav[k : k + frame_size]
+                xfinal[k : k + frame_size] = noise_suppressor.process_frame(frame)
+                k += frame_size
+
+            xfinal = xfinal / (np.max(np.abs(xfinal)) + 1e-10)
+
+        sf.write(output_file, xfinal, fs)
+        logging.info(f"Output file saved: {output_file}")
 
 if __name__ == "__main__":
-    # Example usage
-    try:
-        denoise_and_enhance("data/sp02_train_sn5.wav", "sp02_train_sn5_enhanced.wav", window_type="hamming", normalize=True)
-    except Exception as e:
-        print(f"An error occurred: {e}")
+    input_files = ["data/sp02_train_sn5.wav", 
+                   "data/sp04_babble_sn10.wav", 
+                   "data/sp06_babble_sn5.wav", 
+                   "data/sp09_babble_sn10.wav"]
+    output_files = [os.path.join(EXPORT_DIR, "sp02_train_sn5_processed.wav"), 
+                    os.path.join(EXPORT_DIR, "sp04_babble_sn10_processed.wav"),
+                    os.path.join(EXPORT_DIR, "sp06_babble_sn5_processed.wav"), 
+                    os.path.join(EXPORT_DIR, "sp09_babble_sn10_processed.wav")]
+
+    denoise_all_files(input_files, output_files)
+    # Uncomment the following line to test batch processing with metrics
+    # test()
