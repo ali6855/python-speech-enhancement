@@ -12,6 +12,8 @@ def process_frames(x, frame_size, noise_suppressor):
     k = 0
     while k < len(x):
         frame = x[k : k + frame_size]
+        if len(frame) < frame_size:  # اگر فریم کوچکتر از frame_size بود
+            frame = np.pad(frame, (0, frame_size - len(frame)), mode='constant')  # پد با صفر
         xfinal[k : k + frame_size] = noise_suppressor.process_frame(frame)
         k += frame_size
     return xfinal
