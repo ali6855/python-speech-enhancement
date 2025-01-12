@@ -9,73 +9,18 @@ from pns.noise_suppressor import NoiseSuppressor  # فرض بر این است ک
 EXPORT_DIR = "export"
 os.makedirs(EXPORT_DIR, exist_ok=True)
 
-def test():
-    # Prepare Data 
-    clean_files = ["data/sp02.wav", "data/sp04.wav", "data/sp06.wav", "data/sp09.wav"]
-    input_files = ["data/sp02_train_sn5.wav", "data/sp04_babble_sn10.wav", "data/sp06_babble_sn5.wav", "data/sp09_babble_sn10.wav"]
-    output_files = [os.path.join(EXPORT_DIR, f"sp02_train_sn5_processed.wav"),
-                    os.path.join(EXPORT_DIR, f"sp04_babble_sn10_processed.wav"),
-                    os.path.join(EXPORT_DIR, f"sp06_babble_sn5_processed.wav"),
-                    os.path.join(EXPORT_DIR, f"sp09_babble_sn10_processed.wav")]
+def apply_window(frame, window_type="hamming"):
+    """Apply a windowing function to the frame."""
+    if window_type == "hamming":
+        window = np.hamming(len(frame))
+    elif window_type == "hann":
+        window = np.hanning(len(frame))
+    else:
+        window = np.ones(len(frame))  # No window
+    return frame * window
 
-    # Ensure file lists have the same length
-    assert len(clean_files) == len(input_files) == len(output_files), "File lists must have the same length."
-
-    for i in range(len(input_files)):
-        clean_file = clean_files[i]
-        input_file = input_files[i]
-        output_file = output_files[i]
-
-        # Check if files exist
-        if not os.path.exists(clean_file) or not os.path.exists(input_file):
-            print(f"Skipping {input_file} due to missing file.")
-            continue
-
-        # Read clean and noisy files
-        clean_wav, _ = sf.read(clean_file)
-        noisy_wav, fs = sf.read(input_file)
-
-        # Ensure signals are the same length
-        min_len = min(len(clean_wav), len(noisy_wav))
-        clean_wav = clean_wav[:min_len]
-        noisy_wav = noisy_wav[:min_len]
-
-        # Initialize noise suppressor
-        noise_suppressor = NoiseSuppressor(fs)
-
-        # Process frames
-        frame_size = noise_suppressor.get_frame_size()
-        xfinal = np.zeros(len(noisy_wav))
-        k = 0
-        while k + frame_size < len(noisy_wav):
-            frame = noisy_wav[k: k + frame_size]
-            xfinal[k: k + frame_size] = noise_suppressor.process_frame(frame)
-            k += frame_size
-
-        # Normalize output
-        max_val = max(np.abs(xfinal))
-        if max_val > 0:
-            xfinal = xfinal / max_val
-
-        # Save processed output
-        sf.write(output_file, xfinal, fs)
-
-        # Calculate PESQ metrics
-        print(f"\nProcessing file: {input_file}")
-        try:
-            pesq_nb = pesq(ref=clean_wav, deg=noisy_wav, fs=fs, mode='nb')
-            print(f"Input PESQ (NB): {pesq_nb:.4f}")
-            pesq_nb = pesq(ref=clean_wav, deg=xfinal, fs=fs, mode='nb')
-            print(f"Output PESQ (NB): {pesq_nb:.4f}")
-            if fs >= 16000:
-                pesq_wb = pesq(ref=clean_wav, deg=noisy_wav, fs=fs, mode='wb')
-                print(f"Input PESQ (WB): {pesq_wb:.4f}")
-                pesq_wb = pesq(ref=clean_wav, deg=xfinal, fs=fs, mode='wb')
-                print(f"Output PESQ (WB): {pesq_wb:.4f}")
-        except Exception as e:
-            print(f"Error calculating PESQ: {e}")
-
-def denoise_file(input_file, output_file):
+def denoise_and_enhance(input_file, output_file, window_type="hamming", normalize=True):
+    """Denoise and enhance audio for better clarity."""
     # Ensure export directory exists
     os.makedirs(EXPORT_DIR, exist_ok=True)
     output_file = os.path.join(EXPORT_DIR, os.path.basename(output_file))
@@ -100,10 +45,11 @@ def denoise_file(input_file, output_file):
             k = 0
             while k + frame_size < len(x):
                 frame = x[k: k + frame_size]
+                frame = apply_window(frame, window_type)  # Apply window
                 xfinal[k: k + frame_size, ch] = noise_suppressor.process_frame(frame)
                 k += frame_size
             max_val = max(np.abs(xfinal[:, ch]))
-            if max_val > 0:
+            if normalize and max_val > 0:
                 xfinal[:, ch] /= max_val
     else:
         noise_suppressor = NoiseSuppressor(fs)
@@ -113,19 +59,20 @@ def denoise_file(input_file, output_file):
         k = 0
         while k + frame_size < len(x):
             frame = x[k: k + frame_size]
+            frame = apply_window(frame, window_type)  # Apply window
             xfinal[k: k + frame_size] = noise_suppressor.process_frame(frame)
             k += frame_size
         max_val = max(np.abs(xfinal))
-        if max_val > 0:
+        if normalize and max_val > 0:
             xfinal /= max_val
 
     # Save the processed file
     sf.write(output_file, xfinal, fs)
+    print("Denoising and enhancement complete.")
 
 if __name__ == "__main__":
     # Example usage
     try:
-        denoise_file("data/sp02_train_sn5.wav", "sp02_train_sn5_processed.wav")
-        test()
+        denoise_and_enhance("data/sp02_train_sn5.wav", "sp02_train_sn5_enhanced.wav", window_type="hamming", normalize=True)
     except Exception as e:
         print(f"An error occurred: {e}")
